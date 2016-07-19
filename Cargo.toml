@@ -1,0 +1,6 @@
+[package]
+name = "markov"
+version = "0.1.0"
+authors = ["J. Anthony Sterrett, Jr. <jasterrett@gmail.com>"]
+
+[dependencies]
