@@ -147,6 +147,7 @@ impl<'a, 'b, T, R> Iterator for IntoIter<'a, T, R>
 mod tests {
     use super::*;
 
+    use rand;
     use rustc_serialize::json::{self, Json};
 
     // Convenience function which tests to see if two JSON strings are equal
@@ -270,7 +271,7 @@ mod tests {
     #[test]
     // Decode a JSON string into a MarkovChain
     fn markov_chain_decode() {
-        let mc =  MarkovChain {
+        let mc = MarkovChain {
             first: 'a',
             states: hashmap![
                 'a' => MarkovTransitionSet {
@@ -323,5 +324,51 @@ mod tests {
         }"#).unwrap();
 
         assert_eq!(mc, test_mc);
+    }
+
+    #[test]
+    // Iterate over deterministic Markov chain and collect to string
+    fn deterministic_markov_chain_to_string() {
+        let mc = MarkovChain {
+            first: 'A',
+            states: hashmap![
+                'A' => MarkovTransitionSet {
+                    transitions: hashmap![
+                        'r' => 10
+                    ]
+                },
+                'r' => MarkovTransitionSet {
+                    transitions: hashmap![
+                        'a' => 10
+                    ]
+                },
+                'a' => MarkovTransitionSet {
+                    transitions: hashmap![
+                        'n' => 10
+                    ]
+                },
+                'n' => MarkovTransitionSet {
+                    transitions: hashmap![
+                        'd' => 10
+                    ]
+                },
+                'd' => MarkovTransitionSet {
+                    transitions: hashmap![
+                        'u' => 10
+                    ]
+                },
+                'u' => MarkovTransitionSet {
+                    transitions: hashmap![
+                        'R' => 10
+                    ]
+                }
+            ]
+        };
+
+        let mut rng = rand::thread_rng();
+
+        let result: String = mc.iter(&mut rng).collect();
+
+        assert_eq!(result, "AranduR");
     }
 }
