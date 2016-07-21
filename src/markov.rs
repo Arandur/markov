@@ -1,144 +1,180 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::hash::Hash;
-use std::iter::{Iterator, IntoIterator};
-use rand::{Rand, Rng};
+use std::iter::Iterator;
+use std::mem;
+use rand::Rng;
 use rand::distributions::{Weighted, WeightedChoice, IndependentSample};
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 
-pub trait MarkovState: Eq + Hash + Clone + Rand + Encodable + Decodable {}
-impl<T> MarkovState for T where T: Eq + Hash + Clone + Rand + Encodable + Decodable {}
+pub trait MarkovIdentifier: Clone + Decodable + Encodable + Eq + Hash {}
+impl<T> MarkovIdentifier for T
+    where T: Clone + Decodable + Encodable + Eq + Hash {}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MarkovTransitionSet<T> where T: MarkovState {
-    transitions: HashMap<T, u32>
+pub trait MarkovValue: Decodable + Encodable {}
+impl<T> MarkovValue for T
+    where T: Decodable + Encodable {}
+
+pub struct MarkovState<I: MarkovIdentifier, T: MarkovValue> {
+    identifier: I,
+    transitions: HashMap<I, u32>,
+    pub value: T,
 }
 
-impl<T> MarkovTransitionSet<T> where T: MarkovState {
-    pub fn next<R: Rng>(&self, rng: &mut R) -> Option<T> {
+impl<I: MarkovIdentifier, T: MarkovValue> MarkovState<I, T> {
+    fn next<R: Rng>(&self, rng: &mut R) -> Option<I> {
         if self.transitions.is_empty() {
             None
         } else {
-            // This is a time-space tradeoff; we could store the WeightedChoice
-            // in the struct itself, but that would double the storage needed.
-            let mut items = self.transitions.clone().into_iter()
+            let mut items: Vec<_> = self.transitions.clone().into_iter()
                 .map(|(k, v)| Weighted { weight: v, item: k })
-                .collect::<Vec<_>>();
+                .collect();
             let wc = WeightedChoice::new(&mut items);
             Some(wc.ind_sample(&mut *rng))
         }
     }
 }
 
-impl<T> Encodable for MarkovTransitionSet<T> where T: MarkovState {
-    fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-        s.emit_struct("MarkovTransitionSet", 1, |s| {
-            s.emit_struct_field(
-                "transitions", 0, |s| self.transitions.encode(s))
-        })
-    }
-}
-
-impl<T> Decodable for MarkovTransitionSet<T> where T: MarkovState {
-    fn decode<D: Decoder>(d: &mut D) -> Result<MarkovTransitionSet<T>, D::Error> {
-        d.read_struct("MarkovTransitionSet", 1, |d| {
-            let transitions = try!(
-                d.read_struct_field("transitions", 0, |d| HashMap::decode(d)));
-            Ok(MarkovTransitionSet { transitions: transitions })
-        })
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MarkovChain<T> where T: MarkovState {
-    first: T,
-    states: HashMap<T, MarkovTransitionSet<T>>
-}
-
-impl<T> MarkovChain<T> where T: MarkovState {
-    pub fn iter<'a, 'b, R: Rng>(&'b self, rng: &'a mut R) -> Iter<'a, 'b, T, R> {
-        Iter {
-            current: Some(self.first.clone()),
-            rng: rng,
-            states: &self.states
-        }
-    }
-
-    pub fn into_iter<'a, R: Rng>(self, rng: &'a mut R) -> IntoIter<'a, T, R> {
-        IntoIter {
-            current: Some(self.first),
-            rng: rng,
-            states: self.states
+impl<I: MarkovIdentifier, T: MarkovValue + Clone> Clone for MarkovState<I, T> {
+    fn clone(&self) -> Self {
+        MarkovState {
+            identifier: self.identifier.clone(),
+            transitions: self.transitions.clone(),
+            value: self.value.clone()
         }
     }
 }
 
-impl<T> Encodable for MarkovChain<T> where T: MarkovState {
+impl<I: MarkovIdentifier + fmt::Debug, T: MarkovValue + fmt::Debug> fmt::Debug for MarkovState<I, T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("MarkovState")
+            .field("identifier", &self.identifier)
+            .field("transitions", &self.transitions)
+            .field("value", &self.value)
+            .finish()
+    }
+}
+
+impl<I: MarkovIdentifier, T: MarkovValue + PartialEq> PartialEq for MarkovState<I, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.identifier == other.identifier &&
+            self.transitions == other.transitions &&
+            self.value == other.value
+    }
+}
+
+impl<I: MarkovIdentifier, T: MarkovValue + Eq> Eq for MarkovState<I, T> {}
+
+impl<I: MarkovIdentifier, T: MarkovValue> Encodable for MarkovState<I, T> {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-        s.emit_struct("MarkovChain", 2, |s| {
-            try!(s.emit_struct_field("first", 0, |s| self.first.encode(s)));
-            try!(s.emit_struct_field("states", 1, |s| self.states.encode(s)));
+        s.emit_struct("MarkovState", 3, |s| {
+            try!(s.emit_struct_field("identifier", 0, 
+                                     |s| self.identifier.encode(s)));
+            try!(s.emit_struct_field("transitions", 1,
+                                     |s| self.transitions.encode(s)));
+            try!(s.emit_struct_field("value", 2,
+                                     |s| self.value.encode(s)));
             Ok(())
         })
     }
 }
 
-impl<T> Decodable for MarkovChain<T> where T: MarkovState {
-    fn decode<D: Decoder>(d: &mut D) -> Result<MarkovChain<T>, D::Error> {
-        d.read_struct("MarkovChain", 2, |d| {
-            let first = try!(
-                d.read_struct_field("first", 0, |d| T::decode(d)));
-            let states = try!(
-                d.read_struct_field("states", 1, |d| HashMap::decode(d)));
-            Ok(MarkovChain { first: first, states: states })
+impl<I: MarkovIdentifier, T: MarkovValue> Decodable for MarkovState<I, T> {
+    fn decode<D: Decoder>(d: &mut D) -> Result<MarkovState<I, T>, D::Error> {
+        d.read_struct("MarkovState", 3, |d| {
+            let identifier = try!(
+                d.read_struct_field("identifier", 0, |d| I::decode(d)));
+            let transitions = try!(
+                d.read_struct_field("transitions", 1, |d| HashMap::decode(d)));
+            let value = try!(
+                d.read_struct_field("value", 2, |d| T::decode(d)));
+            Ok(MarkovState {
+                identifier: identifier,
+                transitions: transitions,
+                value: value
+            })
         })
     }
 }
 
-#[derive(Debug)]
-pub struct Iter<'a, 'b, T, R> where T: 'b + MarkovState, R: 'a + Rng {
-    current: Option<T>,
-    rng: &'a mut R,
-    states: &'b HashMap<T, MarkovTransitionSet<T>>
+pub struct MarkovChain<I: MarkovIdentifier, T: MarkovValue> {
+    states: HashMap<I, MarkovState<I, T>>
 }
 
-impl<'a, 'b, T, R> Iterator for Iter<'a, 'b, T, R> 
-    where T: 'b + MarkovState, R: 'a + Rng {
-    type Item = T;
+impl<I: MarkovIdentifier, T: MarkovValue> MarkovChain<I, T> {
+    pub fn get_state(&self, id: &I) -> Option<&MarkovState<I, T>> {
+        self.states.get(id)
+    }
 
-    fn next(&mut self) -> Option<T> {
-        let ret = self.current.clone();
-        match &ret {
-            &Some(ref state) => {
-                self.current = self.states.get(&state)
-                    .and_then(|ts| ts.next(&mut *self.rng));
-            },
-            &None => { self.current = None; }
-        };
-        ret
+    pub fn get_next<R: Rng>(&self, id: &I, rng: &mut R) -> Option<I> {
+        self.states.get(id).and_then(|state| state.next(&mut *rng))
+    }
+
+    pub fn get_iter<'a, 'b, R: Rng>(&'a self, id: &I, rng: &'b mut R) -> Iter<'a, 'b, I, T, R> {
+        Iter { states: &self.states, curr_id: Some(id.clone()), rng: rng }
     }
 }
 
-#[derive(Debug)]
-pub struct IntoIter<'a, T, R> where T: MarkovState, R: 'a + Rng {
-    current: Option<T>,
-    rng: &'a mut R,
-    states: HashMap<T, MarkovTransitionSet<T>>
+impl<I: MarkovIdentifier, T: MarkovValue + Clone> Clone for MarkovChain<I, T> {
+    fn clone(&self) -> Self {
+        MarkovChain {
+            states: self.states.clone()
+        }
+    }
 }
 
-impl<'a, 'b, T, R> Iterator for IntoIter<'a, T, R> 
-    where T: MarkovState, R: 'a + Rng {
-    type Item = T;
+impl<I: MarkovIdentifier + fmt::Debug, T: MarkovValue + fmt::Debug> fmt::Debug for MarkovChain<I, T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("MarkovChain")
+            .field("states", &self.states)
+            .finish()
+    }
+}
 
-    fn next(&mut self) -> Option<T> {
-        let ret = self.current.clone();
-        match &ret {
-            &Some(ref state) => {
-                let states_copy = self.states.clone();
-                self.current = states_copy.get(&state)
-                    .and_then(|ts| ts.next(&mut *self.rng));
-            },
-            &None => { self.current = None; }
-        };
+impl<I: MarkovIdentifier, T: MarkovValue + PartialEq> PartialEq for MarkovChain<I, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.states == other.states
+    }
+}
+
+impl<I: MarkovIdentifier, T: MarkovValue + Eq> Eq for MarkovChain<I, T> {}
+
+impl<I: MarkovIdentifier, T: MarkovValue> Encodable for MarkovChain<I, T> {
+    fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        s.emit_struct("MarkovChain", 1, 
+                      |s| s.emit_struct_field("states", 0, 
+                                              |s| self.states.encode(s)))
+    }
+}
+
+impl<I: MarkovIdentifier, T: MarkovValue> Decodable for MarkovChain<I, T> {
+    fn decode<D: Decoder>(d: &mut D) -> Result<MarkovChain<I, T>, D::Error> {
+        d.read_struct("MarkovChain", 1, |d| {
+            let states = try!(
+                d.read_struct_field("states", 0, |d| HashMap::decode(d)));
+            Ok(MarkovChain {
+                states: states
+            })
+        })
+    }
+}
+
+pub struct Iter<'a, 'b, I: 'a + MarkovIdentifier, T: 'a + MarkovValue, R: 'b + Rng> {
+    states: &'a HashMap<I, MarkovState<I, T>>,
+    curr_id: Option<I>,
+    rng: &'b mut R
+}
+
+impl<'a, 'b, I: 'a + MarkovIdentifier, T: 'a + MarkovValue, R: 'b + Rng> Iterator for Iter<'a, 'b, I, T, R> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<&'a T> {
+        let curr_state = self.curr_id.clone().and_then(|id| self.states.get(&id));
+        let ret = curr_state.map(|state| &state.value);
+        let next_id = curr_state.and_then(|state| state.next(&mut *self.rng));
+
+        mem::replace(&mut self.curr_id, next_id);
+        
         ret
     }
 }
@@ -147,18 +183,13 @@ impl<'a, 'b, T, R> Iterator for IntoIter<'a, T, R>
 mod tests {
     use super::*;
 
+    use std::collections::HashMap;
     use rand;
     use rustc_serialize::json::{self, Json};
 
-    // Convenience function which tests to see if two JSON strings are equal
-    // with respect to their structure
-    fn json_eq(lhs: &str, rhs: &str) -> bool {
-        Json::from_str(lhs) == Json::from_str(rhs)
-    }
-
     // For easy creation of a HashMap
-    macro_rules! hashmap(
-        { $($key:expr => $value:expr),+ } => {
+    macro_rules! hashmap {
+        ( $($key:expr => $value:expr),+ ) => {
             {
                 let mut m = ::std::collections::HashMap::new();
                 $(
@@ -167,158 +198,197 @@ mod tests {
                 m
             }
         };
-    );
+    }
 
-    #[test]
-    // Encode a MarkovTransitionSet into a JSON string
-    fn markov_transition_set_encode() {
-        let mts = MarkovTransitionSet { 
-            transitions: hashmap![ 
-                'a' => 10, 'b' => 20, 'c' => 5 
-            ]
+    macro_rules! assert_json_eq {
+        ( $left:expr , $right:expr ) => { 
+            assert_eq!(Json::from_str(&$left).unwrap(), 
+                       Json::from_str(&$right).unwrap()) 
         };
-        let mts_json = json::encode(&mts).unwrap();
-
-        let test_json = r#"{
-            "transitions": {
-                "a": 10,
-                "b": 20,
-                "c": 5
-            }
-        }"#;
-
-        assert!(json_eq(&mts_json, &test_json));
+        ( $left:expr , $right:expr , $($arg:tt)* ) => {
+            assert_eq!(Json::from_str(&$left).unwrap(), 
+                       Json::from_str(&$right).unwrap(), $($arg)*)
+        };
     }
 
     #[test]
-    // Decode a JSON string into a MarkovTransitionSet
-    fn markov_transition_set_decode() {
-        let mts = MarkovTransitionSet { 
-            transitions: hashmap![ 
-                'a' => 10, 'b' => 20, 'c' => 5 
-            ]
+    // Encode a MarkovState into a JSON string
+    fn markov_state_encode() {
+        let ms = MarkovState {
+            identifier: 0,
+            transitions: hashmap![
+                0 => 10, 1 => 20, 2 => 5
+            ],
+            value: 'a'
         };
-        let test_mts: MarkovTransitionSet<char> = json::decode(r#"{
+        let ms_json = json::encode(&ms).unwrap();
+
+        let test_json = r#"{
+            "identifier": 0,
             "transitions": {
-                "a": 10,
-                "b": 20,
-                "c": 5
-            }
+                "0": 10,
+                "1": 20,
+                "2": 5
+            },
+            "value": "a"
+        }"#;
+
+        assert_json_eq!(ms_json, test_json);
+    }
+
+    #[test]
+    // Decode a JSON string into a MarkovState
+    fn markov_state_decode() {
+        let ms = MarkovState {
+            identifier: 0,
+            transitions: hashmap![
+                0 => 10, 1 => 20, 2 => 5
+            ],
+            value: 'a'
+        };
+        let test_ms: MarkovState<u32, char> = json::decode(r#"{
+            "identifier": 0,
+            "transitions": {
+                "0": 10,
+                "1": 20,
+                "2": 5
+            },
+            "value": "a"
         }"#).unwrap();
 
-        assert_eq!(mts, test_mts);
+        assert_eq!(ms, test_ms);
     }
 
     #[test]
     // Encode a MarkovChain into a JSON string
     fn markov_chain_encode() {
         let mc = MarkovChain {
-            first: 'a',
             states: hashmap![
-                'a' => MarkovTransitionSet {
+                0 => MarkovState {
+                    identifier: 0,
                     transitions: hashmap![
-                        'a' => 10,
-                        'b' => 20,
-                        'c' => 5
-                    ]
+                        0 => 10,
+                        1 => 20,
+                        2 => 5
+                    ],
+                    value: 'a'
                 },
-                'b' => MarkovTransitionSet {
+                1 => MarkovState {
+                    identifier: 1,
                     transitions: hashmap![
-                        'a' => 5,
-                        'b' => 30,
-                        'c' => 15
-                    ]
+                        0 => 5,
+                        1 => 30,
+                        2 => 15
+                    ],
+                    value: 'b'
                 },
-                'c' => MarkovTransitionSet {
+                2 => MarkovState {
+                    identifier: 2,
                     transitions: hashmap![
-                        'a' => 10,
-                        'b' => 10
-                    ]
+                        0 => 10,
+                        1 => 10
+                    ],
+                    value: 'c'
                 }
             ]
         };
         let mc_json = json::encode(&mc).unwrap();
 
         let test_json = r#"{
-            "first": "a",
             "states": {
-                "a": {
+                "0": {
+                    "identifier": 0,
                     "transitions": {
-                        "a": 10,
-                        "b": 20,
-                        "c": 5
-                    }
+                        "0": 10,
+                        "1": 20,
+                        "2": 5
+                    },
+                    "value": "a"
                 },
-                "b": {
+                "1": {
+                    "identifier": 1,
                     "transitions": {
-                        "a": 5,
-                        "b": 30,
-                        "c": 15
-                    }
+                        "0": 5,
+                        "1": 30,
+                        "2": 15
+                    },
+                    "value": "b"
                 },
-                "c": {
+                "2": {
+                    "identifier": 2,
                     "transitions": {
-                        "a": 10,
-                        "b": 10
-                    }
+                        "0": 10,
+                        "1": 10
+                    },
+                    "value": "c"
                 }
             }
         }"#;
 
-        assert!(json_eq(&mc_json, &test_json));
+        assert_json_eq!(mc_json, test_json);
     }
 
     #[test]
     // Decode a JSON string into a MarkovChain
     fn markov_chain_decode() {
         let mc = MarkovChain {
-            first: 'a',
             states: hashmap![
-                'a' => MarkovTransitionSet {
+                0 => MarkovState {
+                    identifier: 0,
                     transitions: hashmap![
-                        'a' => 10,
-                        'b' => 20,
-                        'c' => 5
-                    ]
+                        0 => 10,
+                        1 => 20,
+                        2 => 5
+                    ],
+                    value: 'a'
                 },
-                'b' => MarkovTransitionSet {
+                1 => MarkovState {
+                    identifier: 1,
                     transitions: hashmap![
-                        'a' => 5,
-                        'b' => 30,
-                        'c' => 15
-                    ]
+                        0 => 5,
+                        1 => 30,
+                        2 => 15
+                    ],
+                    value: 'b'
                 },
-                'c' => MarkovTransitionSet {
+                2 => MarkovState {
+                    identifier: 2,
                     transitions: hashmap![
-                        'a' => 10,
-                        'b' => 10
-                    ]
+                        0 => 10,
+                        1 => 10
+                    ],
+                    value: 'c'
                 }
             ]
         };
 
-        let test_mc: MarkovChain<char> = json::decode(r#"{
-            "first": "a",
+        let test_mc: MarkovChain<u32, char> = json::decode(r#"{
             "states": {
-                "a": {
+                "0": {
+                    "identifier": 0,
                     "transitions": {
-                        "a": 10,
-                        "b": 20,
-                        "c": 5
-                    }
+                        "0": 10,
+                        "1": 20,
+                        "2": 5
+                    },
+                    "value": "a"
                 },
-                "b": {
+                "1": {
+                    "identifier": 1,
                     "transitions": {
-                        "a": 5,
-                        "b": 30,
-                        "c": 15
-                    }
+                        "0": 5,
+                        "1": 30,
+                        "2": 15
+                    },
+                    "value": "b"
                 },
-                "c": {
+                "2": {
+                    "identifier": 2,
                     "transitions": {
-                        "a": 10,
-                        "b": 10
-                    }
+                        "0": 10,
+                        "1": 10
+                    },
+                    "value": "c"
                 }
             }
         }"#).unwrap();
@@ -330,45 +400,61 @@ mod tests {
     // Iterate over deterministic Markov chain and collect to string
     fn deterministic_markov_chain_to_string() {
         let mc = MarkovChain {
-            first: 'A',
             states: hashmap![
-                'A' => MarkovTransitionSet {
+                0 => MarkovState {
+                    identifier: 0,
                     transitions: hashmap![
-                        'r' => 10
-                    ]
+                        1 => 10
+                    ],
+                    value: 'A'
                 },
-                'r' => MarkovTransitionSet {
+                1 => MarkovState {
+                    identifier: 1,
                     transitions: hashmap![
-                        'a' => 10
-                    ]
+                        2 => 10
+                    ],
+                    value: 'r'
                 },
-                'a' => MarkovTransitionSet {
+                2 => MarkovState {
+                    identifier: 2,
                     transitions: hashmap![
-                        'n' => 10
-                    ]
+                        3 => 10
+                    ],
+                    value: 'a'
                 },
-                'n' => MarkovTransitionSet {
+                3 => MarkovState {
+                    identifier: 3,
                     transitions: hashmap![
-                        'd' => 10
-                    ]
+                        4 => 10
+                    ],
+                    value: 'n'
                 },
-                'd' => MarkovTransitionSet {
+                4 => MarkovState {
+                    identifier: 4,
                     transitions: hashmap![
-                        'u' => 10
-                    ]
+                        5 => 10
+                    ],
+                    value: 'd'
                 },
-                'u' => MarkovTransitionSet {
+                5 => MarkovState {
+                    identifier: 5,
                     transitions: hashmap![
-                        'R' => 10
-                    ]
+                        6 => 10
+                    ],
+                    value: 'u'
+                },
+                6 => MarkovState {
+                    identifier: 6,
+                    transitions: HashMap::new(),
+                    value: 'r'
                 }
             ]
         };
 
         let mut rng = rand::thread_rng();
 
-        let result: String = mc.iter(&mut rng).collect();
+        let result: String = mc.get_iter(&0, &mut rng).map(|&c| c.clone()).collect();
 
-        assert_eq!(result, "AranduR");
+        assert_eq!(result, "Arandur");
     }
 }
