@@ -210,6 +210,11 @@ pub struct MarkovChain<I, T>
 impl<I, T> MarkovChain<I, T>
     where I: MarkovIdentifier
 {
+    /// Creates a new MarkovChain.
+    pub fn new(states: HashMap<I, MarkovState<I, T>>) -> MarkovChain<I, T> {
+        MarkovChain { states: states }
+    }
+
     /// Calculates the transition from a given state, returning the next
     /// state's identifier.
     ///
@@ -326,26 +331,96 @@ impl<'a, 'b, I, T, R> Iterator for Iter<'a, 'b, I, T, R>
     }
 }
 
+/// Creates a MarkovState.
+///
+/// This macro expects exactly three parameters:
+/// * The state's identifier,
+/// * The state's value, and
+/// * a (possibly empty) block of transitions.
+///
+/// Transitions are specified as `$weight => $id`, and are separated by commas.
+///
+/// ```rust
+/// # #[macro_use] extern crate markov;
+/// # extern crate rand;
+///
+/// # fn main() {
+/// let ms = markov_state![
+///     0, "First state", { 50 => 0, 41 => 1, 9 => 2 }
+/// ];
+///
+/// let mut rng = rand::thread_rng();
+///
+/// println!("{}", ms.next(&mut rng).unwrap());
+/// # }
+/// ```
+///
+/// This code as a 50% chance of printing "0", a 41% chance of printing "1",
+/// and a 9% chance of printing "2".
+#[macro_export]
+macro_rules! markov_state {
+    ( $id:expr, $value:expr, {} ) => {
+        {
+            $crate::MarkovState::new($id, ::std::collections::HashMap::new(), $value)
+        }
+    };
+    ( $id:expr, $value:expr, {
+        $( $t_weight:expr => $t_id:expr ),+
+    } ) => {
+        {
+            let mut transitions = ::std::collections::HashMap::new();
+            $( transitions.insert($t_id, $t_weight); )*
+            $crate::MarkovState::new($id, transitions, $value)
+        }
+    };
+}
+
+/// Creates a MarkovChain.
+///
+/// This macro takes zero or more semicolon-delimited parameters, each one of
+/// which takes the form of the parameters to markov_state!.
+///
+/// # Examples
+///
+/// ```rust
+/// # #[macro_use] extern crate markov;
+/// # extern crate rand;
+///
+/// # fn main() {
+/// let mc = markov_chain![
+///     'a', 'a', { 10 => 'a', 20 => 'b',  5 => 'c' };
+///     'b', 'b', {  5 => 'a', 30 => 'b', 15 => 'c' };
+///     'c', 'c', { 10 => 'a', 10 => 'b' }
+/// ];
+///
+/// let mut rng = rand::thread_rng();
+///
+/// println!("{}", mc.get_iter(&'a', &mut rng).take(20).map(|&c| c).collect::<String>());
+/// # }
+#[macro_export]
+macro_rules! markov_chain {
+    () => {
+        {
+            $crate::MarkovChain::new(::std::collections::HashMap::new())
+        }
+    };
+    ( $( $id:expr, $value:expr, {
+        $( $t_weight:expr => $t_id:expr ),*
+    } );+ ) => {
+        {
+            let mut states = ::std::collections::HashMap::new();
+            $( states.insert($id, markov_state![$id, $value, { $( $t_weight => $t_id ),* }]); )+
+            $crate::MarkovChain::new(states)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::collections::HashMap;
     use rand;
     use rustc_serialize::json::{self, Json};
-
-    // For easy creation of a HashMap
-    macro_rules! hashmap {
-        ( $($key:expr => $value:expr),+ ) => {
-            {
-                let mut m = ::std::collections::HashMap::new();
-                $(
-                    m.insert($key, $value);
-                )+
-                m
-            }
-        };
-    }
 
     macro_rules! assert_json_eq {
         ( $left:expr , $right:expr ) => {
@@ -361,13 +436,13 @@ mod tests {
     #[test]
     // Encode a MarkovState into a JSON string
     fn markov_state_encode() {
-        let ms = MarkovState {
-            identifier: 0,
-            transitions: hashmap![
-                0 => 10, 1 => 20, 2 => 5
-            ],
-            value: 'a',
-        };
+        let ms = markov_state! [
+            0, 'a', {
+                10 => 0,
+                20 => 1,
+                 5 => 2
+            }
+        ];
         let ms_json = json::encode(&ms).unwrap();
 
         let test_json = r#"{
@@ -386,13 +461,13 @@ mod tests {
     #[test]
     // Decode a JSON string into a MarkovState
     fn markov_state_decode() {
-        let ms = MarkovState {
-            identifier: 0,
-            transitions: hashmap![
-                0 => 10, 1 => 20, 2 => 5
-            ],
-            value: 'a',
-        };
+        let ms = markov_state! [
+            0, 'a', {
+                10 => 0,
+                20 => 1,
+                 5 => 2
+            }
+        ];
         let test_ms: MarkovState<u32, char> = json::decode(r#"{
             "identifier": 0,
             "transitions": {
@@ -410,36 +485,22 @@ mod tests {
     #[test]
     // Encode a MarkovChain into a JSON string
     fn markov_chain_encode() {
-        let mc = MarkovChain {
-            states: hashmap![
-                0 => MarkovState {
-                    identifier: 0,
-                    transitions: hashmap![
-                        0 => 10,
-                        1 => 20,
-                        2 => 5
-                    ],
-                    value: 'a'
-                },
-                1 => MarkovState {
-                    identifier: 1,
-                    transitions: hashmap![
-                        0 => 5,
-                        1 => 30,
-                        2 => 15
-                    ],
-                    value: 'b'
-                },
-                2 => MarkovState {
-                    identifier: 2,
-                    transitions: hashmap![
-                        0 => 10,
-                        1 => 10
-                    ],
-                    value: 'c'
-                }
-            ],
-        };
+        let mc = markov_chain![
+            0, 'a', {
+                10 => 0,
+                20 => 1,
+                 5 => 2
+            };
+            1, 'b', {
+                 5 => 0,
+                30 => 1,
+                15 => 2
+            };
+            2, 'c', {
+                10 => 0,
+                10 => 1
+            }
+        ];
         let mc_json = json::encode(&mc).unwrap();
 
         let test_json = r#"{
@@ -479,37 +540,22 @@ mod tests {
     #[test]
     // Decode a JSON string into a MarkovChain
     fn markov_chain_decode() {
-        let mc = MarkovChain {
-            states: hashmap![
-                0 => MarkovState {
-                    identifier: 0,
-                    transitions: hashmap![
-                        0 => 10,
-                        1 => 20,
-                        2 => 5
-                    ],
-                    value: 'a'
-                },
-                1 => MarkovState {
-                    identifier: 1,
-                    transitions: hashmap![
-                        0 => 5,
-                        1 => 30,
-                        2 => 15
-                    ],
-                    value: 'b'
-                },
-                2 => MarkovState {
-                    identifier: 2,
-                    transitions: hashmap![
-                        0 => 10,
-                        1 => 10
-                    ],
-                    value: 'c'
-                }
-            ],
-        };
-
+        let mc = markov_chain![
+            0, 'a', {
+                10 => 0,
+                20 => 1,
+                 5 => 2
+            };
+            1, 'b', {
+                 5 => 0,
+                30 => 1,
+                15 => 2
+            };
+            2, 'c', {
+                10 => 0,
+                10 => 1
+            }
+        ];
         let test_mc: MarkovChain<u32, char> = json::decode(r#"{
             "states": {
                 "0": {
@@ -548,58 +594,15 @@ mod tests {
     #[test]
     // Iterate over deterministic Markov chain and collect to string
     fn deterministic_markov_chain_to_string() {
-        let mc = MarkovChain {
-            states: hashmap![
-                0 => MarkovState {
-                    identifier: 0,
-                    transitions: hashmap![
-                        1 => 10
-                    ],
-                    value: 'A'
-                },
-                1 => MarkovState {
-                    identifier: 1,
-                    transitions: hashmap![
-                        2 => 10
-                    ],
-                    value: 'r'
-                },
-                2 => MarkovState {
-                    identifier: 2,
-                    transitions: hashmap![
-                        3 => 10
-                    ],
-                    value: 'a'
-                },
-                3 => MarkovState {
-                    identifier: 3,
-                    transitions: hashmap![
-                        4 => 10
-                    ],
-                    value: 'n'
-                },
-                4 => MarkovState {
-                    identifier: 4,
-                    transitions: hashmap![
-                        5 => 10
-                    ],
-                    value: 'd'
-                },
-                5 => MarkovState {
-                    identifier: 5,
-                    transitions: hashmap![
-                        6 => 10
-                    ],
-                    value: 'u'
-                },
-                6 => MarkovState {
-                    identifier: 6,
-                    transitions: HashMap::new(),
-                    value: 'r'
-                }
-            ],
-        };
-
+        let mc = markov_chain![
+            0, 'A', { 10 => 1 };
+            1, 'r', { 10 => 2 };
+            2, 'a', { 10 => 3 };
+            3, 'n', { 10 => 4 };
+            4, 'd', { 10 => 5 };
+            5, 'u', { 10 => 6 };
+            6, 'r', {}
+        ];
         let mut rng = rand::thread_rng();
 
         let result: String = mc.get_iter(&0, &mut rng).map(|&c| c.clone()).collect();
