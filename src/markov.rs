@@ -1,3 +1,5 @@
+#![warn(missing_docs)]
+
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
@@ -77,10 +79,11 @@ impl<I, T> PartialEq for MarkovState<I, T>
     }
 }
 
-impl<I, T> Eq for MarkovState<I, T> 
+impl<I, T> Eq for MarkovState<I, T>
     where I: MarkovIdentifier,
           T: Eq
-{}
+{
+}
 
 impl<I, T> Encodable for MarkovState<I, T>
     where I: MarkovIdentifier + Encodable,
