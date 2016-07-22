@@ -22,12 +22,12 @@ use rand::Rng;
 use rand::distributions::{Weighted, WeightedChoice, IndependentSample};
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 
-/// Defines the restrictions on a MarkovIdentifier.
+/// Defines the restrictions on an identifier.
 ///
-/// A MarkovIdentifier serves as a unique identifier for a given MarkovState.
+/// Each MarkovState in a MarkovChain needs to have a unique identifier.
 /// Because this crate's implementation of Markov chains uses a HashMap
-/// internally, MarkovIdentifiers must implement Eq and Hash. And because we
-/// use MarkovIdentifiers in so many places, we require that they also
+/// internally, identifiers must implement Eq and Hash. And because we
+/// use identifiers in so many places, we require that they also
 /// implement Clone.
 ///
 /// (NB: Clone is implemented for &T for all T.)
@@ -37,11 +37,11 @@ impl<T> MarkovIdentifier for T where T: Clone + Eq + Hash {}
 /// A single state of the MarkovChain.
 ///
 /// A MarkovState consists of the following:
-/// * a MarkovIdentifier which uniquely identifies the state's position in the
-/// MarkovChain,
-/// * a weighted set of MarkovIdentifiers, signifying the probabilities that
+/// 
+/// * A unique (in the MarkovChain) identifier,
+/// * A weighted set of identifiers, signifying the probabilities that
 /// the state will transition to any other state in the MarkovChain,
-/// * a value.
+/// * A value.
 ///
 /// Values need not be unique in the MarkovChain. It is the values which will
 /// be returned by MarkovChain's iterator.
@@ -59,7 +59,7 @@ impl<I, T> MarkovState<I, T>
 {
     /// Creates a new MarkovState.
     ///
-    /// `transitions` is a HashMap of MarkovIdentifiers to unsigned integers,
+    /// `transitions` is a HashMap of identifiers to unsigned integers,
     /// which are the weights of each transition. For example:
     ///
     /// ```rust
