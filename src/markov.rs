@@ -7,15 +7,11 @@ use rand::Rng;
 use rand::distributions::{Weighted, WeightedChoice, IndependentSample};
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 
-pub trait MarkovIdentifier: Clone + Decodable + Encodable + Eq + Hash {}
-impl<T> MarkovIdentifier for T where T: Clone + Decodable + Encodable + Eq + Hash {}
-
-pub trait MarkovValue: Decodable + Encodable {}
-impl<T> MarkovValue for T where T: Decodable + Encodable {}
+pub trait MarkovIdentifier: Clone + Eq + Hash {}
+impl<T> MarkovIdentifier for T where T: Clone + Eq + Hash {}
 
 pub struct MarkovState<I, T>
-    where I: MarkovIdentifier,
-          T: MarkovValue
+    where I: MarkovIdentifier
 {
     identifier: I,
     transitions: HashMap<I, u32>,
@@ -23,8 +19,7 @@ pub struct MarkovState<I, T>
 }
 
 impl<I, T> MarkovState<I, T>
-    where I: MarkovIdentifier,
-          T: MarkovValue
+    where I: MarkovIdentifier
 {
     fn next<R: Rng>(&self, rng: &mut R) -> Option<I> {
         if self.transitions.is_empty() {
@@ -48,7 +43,7 @@ impl<I, T> MarkovState<I, T>
 
 impl<I, T> Clone for MarkovState<I, T>
     where I: MarkovIdentifier,
-          T: MarkovValue + Clone
+          T: Clone
 {
     fn clone(&self) -> Self {
         MarkovState {
@@ -61,7 +56,7 @@ impl<I, T> Clone for MarkovState<I, T>
 
 impl<I, T> fmt::Debug for MarkovState<I, T>
     where I: MarkovIdentifier + fmt::Debug,
-          T: MarkovValue + fmt::Debug
+          T: fmt::Debug
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("MarkovState")
@@ -74,7 +69,7 @@ impl<I, T> fmt::Debug for MarkovState<I, T>
 
 impl<I, T> PartialEq for MarkovState<I, T>
     where I: MarkovIdentifier,
-          T: MarkovValue + PartialEq
+          T: PartialEq
 {
     fn eq(&self, other: &Self) -> bool {
         self.identifier == other.identifier && self.transitions == other.transitions &&
@@ -82,11 +77,14 @@ impl<I, T> PartialEq for MarkovState<I, T>
     }
 }
 
-impl<I: MarkovIdentifier, T: MarkovValue + Eq> Eq for MarkovState<I, T> {}
+impl<I, T> Eq for MarkovState<I, T> 
+    where I: MarkovIdentifier,
+          T: Eq
+{}
 
 impl<I, T> Encodable for MarkovState<I, T>
-    where I: MarkovIdentifier,
-          T: MarkovValue
+    where I: MarkovIdentifier + Encodable,
+          T: Encodable
 {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
         s.emit_struct("MarkovState", 3, |s| {
@@ -99,8 +97,8 @@ impl<I, T> Encodable for MarkovState<I, T>
 }
 
 impl<I, T> Decodable for MarkovState<I, T>
-    where I: MarkovIdentifier,
-          T: MarkovValue
+    where I: MarkovIdentifier + Decodable,
+          T: Decodable
 {
     fn decode<D: Decoder>(d: &mut D) -> Result<MarkovState<I, T>, D::Error> {
         d.read_struct("MarkovState", 3, |d| {
@@ -117,15 +115,13 @@ impl<I, T> Decodable for MarkovState<I, T>
 }
 
 pub struct MarkovChain<I, T>
-    where I: MarkovIdentifier,
-          T: MarkovValue
+    where I: MarkovIdentifier
 {
     states: HashMap<I, MarkovState<I, T>>,
 }
 
 impl<I, T> MarkovChain<I, T>
-    where I: MarkovIdentifier,
-          T: MarkovValue
+    where I: MarkovIdentifier
 {
     pub fn get_state(&self, id: &I) -> Option<&MarkovState<I, T>> {
         self.states.get(id)
@@ -146,7 +142,7 @@ impl<I, T> MarkovChain<I, T>
 
 impl<I, T> Clone for MarkovChain<I, T>
     where I: MarkovIdentifier,
-          T: MarkovValue + Clone
+          T: Clone
 {
     fn clone(&self) -> Self {
         MarkovChain { states: self.states.clone() }
@@ -155,7 +151,7 @@ impl<I, T> Clone for MarkovChain<I, T>
 
 impl<I, T> fmt::Debug for MarkovChain<I, T>
     where I: MarkovIdentifier + fmt::Debug,
-          T: MarkovValue + fmt::Debug
+          T: fmt::Debug
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("MarkovChain")
@@ -166,7 +162,7 @@ impl<I, T> fmt::Debug for MarkovChain<I, T>
 
 impl<I, T> PartialEq for MarkovChain<I, T>
     where I: MarkovIdentifier,
-          T: MarkovValue + PartialEq
+          T: PartialEq
 {
     fn eq(&self, other: &Self) -> bool {
         self.states == other.states
@@ -175,13 +171,13 @@ impl<I, T> PartialEq for MarkovChain<I, T>
 
 impl<I, T> Eq for MarkovChain<I, T>
     where I: MarkovIdentifier,
-          T: MarkovValue + Eq
+          T: Eq
 {
 }
 
 impl<I, T> Encodable for MarkovChain<I, T>
-    where I: MarkovIdentifier,
-          T: MarkovValue
+    where I: MarkovIdentifier + Encodable,
+          T: Encodable
 {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
         s.emit_struct("MarkovChain",
@@ -191,8 +187,8 @@ impl<I, T> Encodable for MarkovChain<I, T>
 }
 
 impl<I, T> Decodable for MarkovChain<I, T>
-    where I: MarkovIdentifier,
-          T: MarkovValue
+    where I: MarkovIdentifier + Decodable,
+          T: Decodable
 {
     fn decode<D: Decoder>(d: &mut D) -> Result<MarkovChain<I, T>, D::Error> {
         d.read_struct("MarkovChain", 1, |d| {
@@ -204,7 +200,7 @@ impl<I, T> Decodable for MarkovChain<I, T>
 
 pub struct Iter<'a, 'b, I, T, R>
     where I: 'a + MarkovIdentifier,
-          T: 'a + MarkovValue,
+          T: 'a,
           R: 'b + Rng
 {
     states: &'a HashMap<I, MarkovState<I, T>>,
@@ -214,7 +210,7 @@ pub struct Iter<'a, 'b, I, T, R>
 
 impl<'a, 'b, I, T, R> Iterator for Iter<'a, 'b, I, T, R>
     where I: 'a + MarkovIdentifier,
-          T: 'a + MarkovValue,
+          T: 'a,
           R: 'b + Rng
 {
     type Item = &'a T;
